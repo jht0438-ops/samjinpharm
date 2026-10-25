@@ -103,10 +103,34 @@ with t3:
     a.metric('시나리오 최대 누적 자금 부족액',f'{max_gap:,.2f}억 원')
     b.metric('자금 부족 최대 시점',peak_month)
     c.metric('2027년 말 누적 순현금흐름',f'{end_2027:,.2f}억 원')
+    st.markdown('### 그래프가 만들어지는 계산 과정')
+    st.write('아래 설명과 예시는 **현재 입력한 시나리오 값에 따라 자동으로 변경**됩니다. 매출 발생일과 실제 입출금일을 구분해 계산합니다.')
+    monthly_amount = annual_sales / 12
+    example_day = pd.Timestamp('2027-01-01')
+    january_days = 31
+    daily_amount = monthly_amount / january_days
+    example_receipt = example_day + pd.Timedelta(days=collection_days)
+    example_payment = example_day + pd.Timedelta(days=payment_days)
+    st.markdown(f"""**① 월별 매출을 일별로 나눕니다.** 연간 매출 가정 {annual_sales:,.2f}억 원 ÷ 12개월 = 월 {monthly_amount:,.4f}억 원입니다. 2027년 1월은 31일이므로 1월 1일의 가상 매출 발생액은 {monthly_amount:,.4f} ÷ 31 = **{daily_amount:,.4f}억 원**입니다. 매입대금 발생액은 이 금액에 원가율 {cost_ratio:.0f}%를 곱한 **{daily_amount * cost_ratio / 100:,.4f}억 원**입니다. (2월 등 다른 달은 해당 월의 실제 일수로 나눕니다.)""")
+    st.markdown(f"""**② 각 날짜의 현금 유입·유출 시점을 옮깁니다.** 예를 들어 **2027-01-01**에 발생한 매출은 회수기간 {collection_days}일을 더해 **{example_receipt:%Y-%m-%d}**에 {daily_amount:,.4f}억 원이 유입되는 것으로 계산합니다. 같은 날 발생한 매입대금은 지급기간 {payment_days}일을 더해 **{example_payment:%Y-%m-%d}**에 {daily_amount * cost_ratio / 100:,.4f}억 원이 유출되는 것으로 계산합니다. 날짜 이동은 달력일 기준이며 주말·공휴일 조정은 하지 않습니다.""")
+    st.markdown('**③ 결제일이 속한 월별로 합산합니다.** 해당 월에 회수되는 모든 일별 판매대금을 더하면 `월별 현금 유입`, 지급되는 모든 일별 매입대금을 더하면 `월별 현금 유출`이 됩니다. 매출이 발생한 월과 현금이 움직이는 월은 다를 수 있습니다.')
+    st.markdown('**④ 순현금흐름을 계산하고 누적합니다.** `월별 순현금흐름 = 현금 유입 − 현금 유출`, `당월 말 누적 순현금흐름 = 전월 말 누적 순현금흐름 + 당월 순현금흐름`입니다. 첫 달 이전의 사업 초기 현금잔액은 0으로 가정합니다. **꺾은선 그래프의 각 점은 해당 월말 누적값**이며, 막대그래프는 월별 유입·유출을 각각 나타냅니다.')
+    st.markdown('**⑤ 누적값이 가장 낮은 달을 찾습니다.** 누적 순현금흐름이 음수라면 해당 시점까지 이 가상 사업에서 유출이 유입보다 많았다는 뜻입니다. 최저 누적값의 절댓값을 `최대 누적 자금 부족액`으로 표시합니다. 실제 회사 전체 자금 부족액은 아닙니다.')
+    st.markdown('#### 현재 입력값으로 확인하는 월별 계산표')
+    detail = cash[['현금 유입','현금 유출','월별 순현금흐름','누적 순현금흐름']].copy()
+    detail.insert(0,'전월 말 누적액',detail['누적 순현금흐름'].shift(1,fill_value=0))
+    detail.index.name='결제 월'
+    st.dataframe(detail.style.format('{:,.3f}'),use_container_width=True)
+    first_nonzero = detail[(detail['현금 유입'] != 0) | (detail['현금 유출'] != 0)]
+    if not first_nonzero.empty:
+        m=first_nonzero.index[0]
+        v=detail.loc[m]
+        st.info(f"**계산 검증 예시 · {m}:** 전월 누적 {v['전월 말 누적액']:,.3f} + 이번 달 유입 {v['현금 유입']:,.3f} − 이번 달 유출 {v['현금 유출']:,.3f} = 월말 누적 **{v['누적 순현금흐름']:,.3f}억 원**. 표의 다른 달도 동일한 산식을 적용합니다.")
+    st.divider()
+    st.markdown('### 월별 자금수지 그래프')
     st.plotly_chart(px.line(cash.reset_index().rename(columns={'index':'월'}),x='월',y='누적 순현금흐름',markers=True,title='월말 누적 순현금흐름 (억 원)'),use_container_width=True)
     plot=cash[['현금 유입','현금 유출']].reset_index().rename(columns={'index':'월'}).melt(id_vars='월',var_name='구분',value_name='금액')
     st.plotly_chart(px.bar(plot,x='월',y='금액',color='구분',barmode='group',title='월별 현금 유입·유출 (억 원)'),use_container_width=True)
-    st.dataframe(cash[['현금 유입','현금 유출','월별 순현금흐름','누적 순현금흐름']].style.format('{:,.2f}'),use_container_width=True)
     st.caption('2027년은 계산 편의를 위한 가상 사업연도입니다. 2028년 후속 기간은 2027년 발생 매출·매입의 지연 결제를 반영하며, 신규 매출은 추가하지 않습니다. 최대 자금 부족액은 사업 자체의 현금흐름만 고려한 추정치로 실제 차입 필요액과 다릅니다.')
 
 with t4:
