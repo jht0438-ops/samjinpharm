@@ -2,166 +2,139 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-st.set_page_config(page_title='삼진제약 코프로모션 자금수지 시뮬레이터', page_icon='💊', layout='wide')
-st.title('💊 삼진제약 코프로모션 확대에 따른 자금수지 시뮬레이터')
-st.caption('공시 실적과 가정 기반 사업 시나리오를 구분한 자금관리·수납관리 분석 도구 | 금액 단위: 억 원')
+st.set_page_config(page_title="삼진제약 신약개발 투자·자금관리 분석기", page_icon="💊", layout="wide")
 
-# 출처: 삼진제약 2025 사업보고서(2026.03.16) '매출 및 수주상황' 표
-# 원 공시 단위 백만원 -> 억원: 100으로 나눔. '상품'은 코프로모션 매출과 동의어가 아님.
-SALES = {
-    '2023': {'제품': 2505.04, '상품': 247.69, '기타': 168.56, '합계': 2921.29},
-    '2024': {'제품': 2575.58, '상품': 304.76, '기타': 203.16, '합계': 3083.50},
-    '2025': {'제품': 2569.77, '상품': 366.03, '기타': 155.54, '합계': 3091.34},
-}
-# 제품 합계는 제형별 합산; 2025: 167849+46565+38185+4378=256977 (백만원)
-# 2024: 163664+48512+40082+5300=257558
-# 2023: 161663+40935+42831+5075=250504
-sales = pd.DataFrame(SALES).T
-sales['상품 비중(%)'] = sales['상품'] / sales['합계'] * 100
+# 단위: 억 원. 연구개발비는 공시의 백만원 수치를 100으로 나눈 값,
+# 재무제표 금액은 원 수치를 1억으로 나눈 값입니다.
+annual = pd.DataFrame({
+    "연도": ["2023", "2024", "2025"],
+    "연구개발비": [354.30, 352.88, 356.73],
+    "영업활동현금흐름": [83.33560990, 381.52787881, 241.11431141],
+    "현금및현금성자산": [24.01473713, 34.17435779, 120.80854669],
+    "단기금융상품": [16.05, 2.87625556, 8.25],
+    "단기차입금": [755.0, 910.0, 800.0],
+    "유동성장기부채": [383.3328, 291.6664, 260.0],
+    "장기차입금": [41.6664, 0.0, 285.0],
+})
+half = pd.DataFrame({
+    "기간": ["2025 상반기", "2026 상반기"],
+    "연구개발비": [168.61, 163.42],
+    "영업활동현금흐름": [154.80214747, 270.72366998],
+})
+latest = {"현금및현금성자산": 128.04375, "단기금융상품": 50.713,
+          "단기차입금": 750.0, "유동성장기부채": 260.0, "장기차입금": 280.0}
+annual["총차입금"] = annual[["단기차입금", "유동성장기부채", "장기차입금"]].sum(axis=1)
+annual["현금+단기금융상품"] = annual["현금및현금성자산"] + annual["단기금융상품"]
+annual["연구개발비 대비 영업현금흐름"] = annual["영업활동현금흐름"] / annual["연구개발비"]
 
-st.info('**구분 원칙:** 과거 매출·상품 비중은 공시 사실입니다. 코프로모션의 매출 규모·매입원가율·지급/회수조건은 **사용자가 입력한 가상 조건**이며 실제 계약조건이나 회사의 공식 자금계획이 아닙니다. 공시의 ‘상품 매출’ 전체를 코프로모션 매출로 간주하지 않습니다.')
+def fmt(v):
+    return f"{v:,.1f}억 원"
 
-t0, t1, t2, t3, t4 = st.tabs(['📘 개요', '① 삼진제약 사업구조', '② 코프로모션 시나리오', '③ 월별 자금수지', '④ 자금관리 활용'])
+def line_chart(df, x, ys, labels=None):
+    d = df.melt(id_vars=x, value_vars=ys, var_name="항목", value_name="금액(억 원)")
+    fig = px.line(d, x=x, y="금액(억 원)", color="항목", markers=True,
+                  color_discrete_sequence=["#3566AD", "#E09B41", "#5A9B83"])
+    fig.update_layout(legend_title_text="", margin=dict(l=0, r=10, t=20, b=0),
+                      hovermode="x unified", height=345)
+    st.plotly_chart(fig, use_container_width=True)
 
-with t0:
-    st.header('프로그램 개발 배경')
-    st.write('삼진제약의 코프로모션 확대 방향에 주목했습니다. 외부 제품의 판매 확대는 매출뿐 아니라 매입대금 지급 시점, 판매대금 회수 시점에 따라 자금 부담이 달라질 수 있습니다. 따라서 공시 매출구조를 확인하고, 가상의 코프로모션 사업을 추가했을 때 **언제 얼마의 현금이 들어오고 나가는지** 분석하도록 설계했습니다.')
-    st.subheader('핵심 질문')
-    st.markdown('**“코프로모션 매출이 성장해도 매입대금이 먼저 지급된다면, 월별 자금수지에는 어떤 공백이 생길까?”**')
-    st.markdown('''**분석 흐름**
-    1. 삼진제약의 공시 제품·상품 매출구조 확인
-    2. 신규/확대 코프로모션 사업의 매출, 매입원가율, 지급·회수조건 입력
-    3. 일별 현금 발생·결제 일정을 월별로 집계하고 누적 순현금흐름 분석
-    4. 거래조건 개선에 따른 필요 운전자금과 유동성 대응 시사점 확인''')
-    st.warning('분석은 신규 사업의 **증분 현금흐름**만 다룹니다. 회사 전체 현금잔액, 실제 코프로모션 계약금액, 기존 사업의 자금일보를 재현하지 않습니다.')
+st.title("💊 삼진제약 신약개발 투자·자금관리 분석기")
+st.caption("실제 삼진제약 공시자료 기반 | 단위: 억 원 | 2023~2025년 및 2025·2026년 상반기")
+st.info("이 프로그램은 신약개발 투자를 뒷받침하는 **현금창출력과 차입금 현황**을 쉽게 비교합니다. 회사의 실제 자금집행계획이나 차입금 만기표를 예측하지는 않습니다.")
 
-with t1:
-    st.header('① 삼진제약 공시 매출구조')
-    st.markdown('**왜 분석하나요?** 회사의 기존 제품·상품 매출 비중을 확인해 코프로모션 확대라는 사업 방향을 검토할 출발점을 마련합니다.')
-    st.markdown('**어떻게 분석하나요?** 사업보고서의 제품(정제·주사제·캡슐제·기타제형), 상품, 기타 매출을 연도별로 비교합니다.')
-    st.markdown('**얻을 수 있는 결론은?** 상품 매출이 확대된 사실은 확인할 수 있지만, 이 금액 전체가 코프로모션에서 발생했다고 결론내릴 수는 없습니다.')
+overview, rd_tab, cash_tab, debt_tab, summary = st.tabs(
+    ["🏠 한눈에 보기", "① 연구개발 투자", "② 현금창출력", "③ 차입금·현금", "④ 종합 결론"]
+)
+
+with overview:
+    st.header("이 프로그램은 무엇을 분석하나요?")
+    st.write("삼진제약은 항암·면역 분야 등 신약개발을 추진하고 있습니다. 연구개발을 지속하려면 투자 규모만 보는 것이 아니라, **본업에서 들어오는 현금과 갚아야 할 차입금**을 함께 확인해야 합니다.")
     a,b,c=st.columns(3)
-    a.metric('2025년 총매출',f"{sales.loc['2025','합계']:,.1f}억 원")
-    b.metric('2025년 상품매출',f"{sales.loc['2025','상품']:,.1f}억 원")
-    c.metric('2023→2025 상품매출 증가율',f"{(sales.loc['2025','상품']/sales.loc['2023','상품']-1)*100:.1f}%")
-    chart=sales[['제품','상품','기타']].reset_index().rename(columns={'index':'연도'}).melt(id_vars='연도',var_name='매출구분',value_name='매출액')
-    st.plotly_chart(px.bar(chart,x='연도',y='매출액',color='매출구분',barmode='stack',title='삼진제약 연간 매출구조 (억 원)'),use_container_width=True)
-    st.dataframe(sales.style.format('{:,.2f}'),use_container_width=True)
-    st.caption('출처: 삼진제약 2025 사업보고서, II. 사업의 내용 > 4. 매출 및 수주상황. 2023~2025 연간 실적. 공시 단위 백만원을 억원으로 환산.')
+    a.metric("2025 연구개발비", fmt(356.73))
+    b.metric("2025 영업활동현금흐름", fmt(241.11431141))
+    c.metric("2026.6 총차입금", fmt(1290))
+    st.markdown("#### 분석 순서")
+    st.markdown("**① 얼마나 투자했는가?** → **② 현금을 얼마나 창출했는가?** → **③ 차입금 부담은 어떤가?** → **④ 자금관리 담당자는 무엇을 확인해야 하는가?**")
+    st.warning("연구개발비는 회계상 비용·제조경비 등을 포함하는 공시 집계액으로, 해당 기간의 실제 연구개발 현금지출액과 같지 않습니다. 영업활동현금흐름도 연구개발에 전액 사용할 수 있는 자금이 아닙니다.")
 
-with t2:
-    st.header('② 코프로모션 사업 확대 시나리오')
-    st.markdown('**왜 분석하나요?** 매출 확대의 효과를 이익뿐 아니라 현금 유입·유출 시점으로 확인하기 위해서입니다.')
-    st.markdown('**어떻게 분석하나요?** 연간 매출액을 월별로 균등 배분하고, 매입원가와 현금 회수·지급 시점을 일 단위로 계산합니다.')
-    st.markdown('**얻을 수 있는 결론은?** 사업 규모가 같더라도 거래조건에 따라 현금 부족 구간과 운전자금 부담이 달라집니다.')
-    st.caption('아래 값은 **전부 가상 시나리오 입력값**입니다. 실제 삼진제약의 코프로모션 계약조건이 아닙니다.')
-    c1,c2=st.columns(2)
-    with c1:
-        annual_sales=st.number_input('신규/확대 사업 연간 매출 가정 (억 원)',min_value=0.0,max_value=3000.0,value=120.0,step=10.0)
-        cost_ratio=st.slider('매입원가율 가정 (%)',30.0,95.0,87.0,1.0)
-    with c2:
-        payment_days=st.slider('매입대금 지급까지 소요일 (일)',0,150,80,5)
-        collection_days=st.slider('판매대금 회수까지 소요일 (일)',0,180,105,5)
-    st.caption('가정: 매출과 매입은 매월 동일한 금액으로 발생하고, 월중 매일 균등하게 배분됩니다. 매입대금은 매출에 비례하여 지급합니다. 판촉·운영비, 부가가치세·법인세·재고 선매입·반품·수수료·기존 잔액은 제외합니다.')
+with rd_tab:
+    st.header("① 삼진제약은 연구개발에 얼마나 투자하고 있을까?")
+    st.write("연구개발비가 유지·확대되는지 실제 공시 수치로 확인합니다.")
+    st.metric("2025년 연구개발비", fmt(annual.iloc[-1]["연구개발비"]),
+              f"{annual.iloc[-1]['연구개발비']-annual.iloc[-2]['연구개발비']:+.1f}억 원 (전년 대비)")
+    fig=px.bar(annual, x="연도", y="연구개발비", text="연구개발비",
+               color_discrete_sequence=["#3566AD"])
+    fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
+    fig.update_layout(yaxis_title="억 원", xaxis_title="", height=330, margin=dict(t=30,b=0))
+    st.plotly_chart(fig, use_container_width=True)
+    st.write("2023~2025년 연구개발비는 연간 약 350억 원 수준을 유지했습니다. 이는 **신약개발 관련 투자 활동이 지속되고 있음**을 보여주는 지표입니다.")
+    st.markdown("#### 상반기끼리 비교")
+    st.dataframe(half[["기간","연구개발비"]].style.format({"연구개발비":"{:,.1f}"}), hide_index=True, use_container_width=True)
+    st.caption("2026년 상반기 163.4억 원 vs 2025년 상반기 168.6억 원. 반기 금액과 연간 금액은 직접 비교하지 않습니다.")
+    with st.expander("계산과 자료 출처"):
+        st.write("사업보고서·반기보고서 '연구개발 비용'의 **연구개발비용 합계**(백만원)를 100으로 나눠 억 원으로 변환했습니다.")
+        st.write("2023: 35,430백만원 / 2024: 35,288백만원 / 2025: 35,673백만원 / 2025 상반기: 16,861백만원 / 2026 상반기: 16,342백만원")
 
-# 달력상 실제 월 일수로 2027년 1~12월 영업을 가정, 2028년까지 후속 수금/지급 추적
-# 코프로모션 신규 사업의 증분 흐름만 계산. 2027은 가상의 시뮬레이션 연도이며 사업 계획 연도가 아님.
-months=pd.period_range('2027-01',periods=12,freq='M')
-monthly_sales=[annual_sales/12]*12
-records=[]
-for period,amt in zip(months,monthly_sales):
-    dates=pd.date_range(period.start_time,period.end_time,freq='D')
-    for d in dates:
-        portion=amt/len(dates)
-        records.append({'date':d+pd.Timedelta(days=collection_days),'type':'판매대금 수금','amount':portion})
-        records.append({'date':d+pd.Timedelta(days=payment_days),'type':'매입대금 지급','amount':-portion*cost_ratio/100})
+with cash_tab:
+    st.header("② 삼진제약은 본업에서 얼마나 현금을 창출했을까?")
+    st.write("영업활동현금흐름은 회사의 본업에서 발생한 현금의 순유입·유출을 나타냅니다.")
+    a,b=st.columns(2)
+    a.metric("2025년 영업활동현금흐름",fmt(annual.iloc[-1]["영업활동현금흐름"]))
+    b.metric("2026년 상반기 영업활동현금흐름",fmt(half.iloc[-1]["영업활동현금흐름"]))
+    line_chart(annual,"연도",["영업활동현금흐름","연구개발비"])
+    st.caption("같은 그래프에서 두 지표를 비교하되, 연구개발비와 영업현금흐름은 성격이 다른 수치입니다. 두 값의 차액을 '투자 후 남은 현금'으로 해석하면 안 됩니다.")
+    st.markdown("#### 같은 기간(상반기)끼리 비교")
+    fig=px.bar(half, x="기간", y="영업활동현금흐름", text="영업활동현금흐름",
+               color_discrete_sequence=["#5A9B83"])
+    fig.update_traces(texttemplate="%{text:.1f}",textposition="outside")
+    fig.update_layout(yaxis_title="억 원",xaxis_title="",height=300,margin=dict(t=30,b=0))
+    st.plotly_chart(fig,use_container_width=True)
+    st.success("2026년 상반기 영업활동현금흐름은 약 270.7억 원으로, 전년 동기 약 154.8억 원보다 약 115.9억 원 증가했습니다.")
+    with st.expander("계산과 자료 출처"):
+        st.write("재무제표 '현금흐름표'의 **영업활동으로 인한 현금흐름**을 원 단위에서 1억으로 나눴습니다.")
+        st.write("2023: 8,333,560,990원 / 2024: 38,152,787,881원 / 2025: 24,111,431,141원")
+        st.write("2025 상반기: 15,480,214,747원 / 2026 상반기: 27,072,366,998원")
 
-def summarize(records):
-    frame=pd.DataFrame(records)
-    frame['월']=frame['date'].dt.to_period('M').astype(str)
-    pivot=frame.pivot_table(index='월',columns='type',values='amount',aggfunc='sum',fill_value=0)
-    for name in ['판매대금 수금','매입대금 지급']:
-        if name not in pivot:pivot[name]=0.0
-    pivot=pivot.reindex(pd.period_range('2027-01','2028-04',freq='M').astype(str),fill_value=0.0)
-    pivot['현금 유입']=pivot['판매대금 수금']
-    pivot['현금 유출']=-pivot['매입대금 지급']
-    pivot['월별 순현금흐름']=pivot['현금 유입']-pivot['현금 유출']
-    pivot['누적 순현금흐름']=pivot['월별 순현금흐름'].cumsum()
-    return pivot
-
-cash=summarize(records)
-max_gap=max(0.0,-cash['누적 순현금흐름'].min())
-peak_month=cash['누적 순현금흐름'].idxmin()
-end_2027=cash.loc['2027-12','누적 순현금흐름']
-
-with t3:
-    st.header('③ 월별 자금수지 및 필요 운전자금')
-    st.markdown('**왜 분석하나요?** 사업 확대 과정에서 매출과 매입대금의 결제 시점이 달라 발생하는 현금 부족 구간을 찾기 위해서입니다.')
-    st.markdown('**어떻게 분석하나요?** 각 월의 매출을 날짜별로 배분하고 입력한 회수·지급일만큼 이동시켜 현금흐름을 집계합니다.')
-    st.markdown('**얻을 수 있는 결론은?** 시나리오에서 가장 큰 누적 현금 부족액과 그 발생 시점을 확인할 수 있습니다.')
+with debt_tab:
+    st.header("③ 현금과 차입금은 어떻게 변했을까?")
+    st.write("신약개발을 지속하기 위해서는 현금창출력뿐 아니라 차입금과 단기 유동성 현황을 함께 살펴야 합니다.")
+    total_debt=sum(latest[k] for k in ["단기차입금","유동성장기부채","장기차입금"])
+    liquid=latest["현금및현금성자산"]+latest["단기금융상품"]
     a,b,c=st.columns(3)
-    a.metric('시나리오 최대 누적 자금 부족액',f'{max_gap:,.2f}억 원')
-    b.metric('자금 부족 최대 시점',peak_month)
-    c.metric('2027년 말 누적 순현금흐름',f'{end_2027:,.2f}억 원')
-    st.markdown('### 그래프가 만들어지는 계산 과정')
-    st.write('아래 설명과 예시는 **현재 입력한 시나리오 값에 따라 자동으로 변경**됩니다. 매출 발생일과 실제 입출금일을 구분해 계산합니다.')
-    monthly_amount = annual_sales / 12
-    example_day = pd.Timestamp('2027-01-01')
-    january_days = 31
-    daily_amount = monthly_amount / january_days
-    example_receipt = example_day + pd.Timedelta(days=collection_days)
-    example_payment = example_day + pd.Timedelta(days=payment_days)
-    st.markdown(f"""**① 월별 매출을 일별로 나눕니다.** 연간 매출 가정 {annual_sales:,.2f}억 원 ÷ 12개월 = 월 {monthly_amount:,.4f}억 원입니다. 2027년 1월은 31일이므로 1월 1일의 가상 매출 발생액은 {monthly_amount:,.4f} ÷ 31 = **{daily_amount:,.4f}억 원**입니다. 매입대금 발생액은 이 금액에 원가율 {cost_ratio:.0f}%를 곱한 **{daily_amount * cost_ratio / 100:,.4f}억 원**입니다. (2월 등 다른 달은 해당 월의 실제 일수로 나눕니다.)""")
-    st.markdown(f"""**② 각 날짜의 현금 유입·유출 시점을 옮깁니다.** 예를 들어 **2027-01-01**에 발생한 매출은 회수기간 {collection_days}일을 더해 **{example_receipt:%Y-%m-%d}**에 {daily_amount:,.4f}억 원이 유입되는 것으로 계산합니다. 같은 날 발생한 매입대금은 지급기간 {payment_days}일을 더해 **{example_payment:%Y-%m-%d}**에 {daily_amount * cost_ratio / 100:,.4f}억 원이 유출되는 것으로 계산합니다. 날짜 이동은 달력일 기준이며 주말·공휴일 조정은 하지 않습니다.""")
-    st.markdown('**③ 결제일이 속한 월별로 합산합니다.** 해당 월에 회수되는 모든 일별 판매대금을 더하면 `월별 현금 유입`, 지급되는 모든 일별 매입대금을 더하면 `월별 현금 유출`이 됩니다. 매출이 발생한 월과 현금이 움직이는 월은 다를 수 있습니다.')
-    st.markdown('**④ 순현금흐름을 계산하고 누적합니다.** `월별 순현금흐름 = 현금 유입 − 현금 유출`, `당월 말 누적 순현금흐름 = 전월 말 누적 순현금흐름 + 당월 순현금흐름`입니다. 첫 달 이전의 사업 초기 현금잔액은 0으로 가정합니다. **꺾은선 그래프의 각 점은 해당 월말 누적값**이며, 막대그래프는 월별 유입·유출을 각각 나타냅니다.')
-    st.markdown('**⑤ 누적값이 가장 낮은 달을 찾습니다.** 누적 순현금흐름이 음수라면 해당 시점까지 이 가상 사업에서 유출이 유입보다 많았다는 뜻입니다. 최저 누적값의 절댓값을 `최대 누적 자금 부족액`으로 표시합니다. 실제 회사 전체 자금 부족액은 아닙니다.')
-    st.markdown('#### 현재 입력값으로 확인하는 월별 계산표')
-    detail = cash[['현금 유입','현금 유출','월별 순현금흐름','누적 순현금흐름']].copy()
-    detail.insert(0,'전월 말 누적액',detail['누적 순현금흐름'].shift(1,fill_value=0))
-    detail.index.name='결제 월'
-    st.dataframe(detail.style.format('{:,.3f}'),use_container_width=True)
-    first_nonzero = detail[(detail['현금 유입'] != 0) | (detail['현금 유출'] != 0)]
-    if not first_nonzero.empty:
-        m=first_nonzero.index[0]
-        v=detail.loc[m]
-        st.info(f"**계산 검증 예시 · {m}:** 전월 누적 {v['전월 말 누적액']:,.3f} + 이번 달 유입 {v['현금 유입']:,.3f} − 이번 달 유출 {v['현금 유출']:,.3f} = 월말 누적 **{v['누적 순현금흐름']:,.3f}억 원**. 표의 다른 달도 동일한 산식을 적용합니다.")
-    st.divider()
-    st.markdown('### 월별 자금수지 그래프')
-    st.plotly_chart(px.line(cash.reset_index().rename(columns={'index':'월'}),x='월',y='누적 순현금흐름',markers=True,title='월말 누적 순현금흐름 (억 원)'),use_container_width=True)
-    plot=cash[['현금 유입','현금 유출']].reset_index().rename(columns={'index':'월'}).melt(id_vars='월',var_name='구분',value_name='금액')
-    st.plotly_chart(px.bar(plot,x='월',y='금액',color='구분',barmode='group',title='월별 현금 유입·유출 (억 원)'),use_container_width=True)
-    st.caption('2027년은 계산 편의를 위한 가상 사업연도입니다. 2028년 후속 기간은 2027년 발생 매출·매입의 지연 결제를 반영하며, 신규 매출은 추가하지 않습니다. 최대 자금 부족액은 사업 자체의 현금흐름만 고려한 추정치로 실제 차입 필요액과 다릅니다.')
+    a.metric("2026.6 총차입금",fmt(total_debt))
+    b.metric("2026.6 현금+단기금융상품",fmt(liquid))
+    c.metric("2026.6 유동성 차입금",fmt(latest["단기차입금"]+latest["유동성장기부채"]))
+    line_chart(annual,"연도",["총차입금","현금+단기금융상품"])
+    st.markdown("#### 2026년 6월 말 구성")
+    debt_df=pd.DataFrame({"항목":["단기차입금","유동성장기부채","장기차입금","현금및현금성자산","단기금융상품"],
+                          "금액(억 원)":[latest[k] for k in ["단기차입금","유동성장기부채","장기차입금","현금및현금성자산","단기금융상품"]]})
+    st.dataframe(debt_df.style.format({"금액(억 원)":"{:,.1f}"}),hide_index=True,use_container_width=True)
+    st.warning("총차입금은 단기차입금 + 유동성장기부채 + 장기차입금입니다(리스부채 제외). **유동성 차입금은 1년 이내 상환 분류액**이지 모든 금액이 동시에 만기 도래한다는 뜻은 아닙니다. 현금과 단기금융상품만으로 회사의 전체 상환능력을 판단할 수도 없습니다.")
+    with st.expander("계산과 자료 출처"):
+        st.write("2026년 반기보고서 재무상태표의 금액(원)을 1억으로 나눴습니다.")
+        st.write("2026.6 단기차입금 750억 + 유동성장기부채 260억 + 장기차입금 280억 = 총차입금 1,290억 원")
+        st.write("2026.6 현금및현금성자산 128.04억 + 단기금융상품 50.71억 = 178.76억 원")
+        st.write("2023~2025년 총차입금 및 현금·단기금융상품도 각 연말 재무상태표 기준입니다.")
 
-with t4:
-    st.header('④ 거래조건 개선과 자금관리 활용')
-    st.markdown('**왜 분석하나요?** 단순히 부족액을 확인하는 데서 그치지 않고 수금관리·자금수지 관리에 적용할 수 있는 개선 방향을 비교하기 위해서입니다.')
-    improve=st.slider('판매대금 회수기간 단축 가정 (일)',0,min(60,collection_days),min(15,collection_days),5)
-    revised=[]
-    for rec in records:
-        d=rec.copy()
-        if d['type']=='판매대금 수금':d['date']=d['date']-pd.Timedelta(days=improve)
-        revised.append(d)
-    improved=summarize(revised)
-    new_gap=max(0.0,-improved['누적 순현금흐름'].min())
-    a,b,c=st.columns(3)
-    a.metric('기존 최대 부족액',f'{max_gap:,.2f}억 원')
-    b.metric('수금조건 개선 후 최대 부족액',f'{new_gap:,.2f}억 원')
-    c.metric('최대 부족액 감소',f'{max_gap-new_gap:,.2f}억 원')
-    compare=pd.DataFrame({'월':cash.index,'기존 조건':cash['누적 순현금흐름'].values,'수금기간 단축':improved['누적 순현금흐름'].values}).melt(id_vars='월',var_name='조건',value_name='누적 순현금흐름')
-    st.plotly_chart(px.line(compare,x='월',y='누적 순현금흐름',color='조건',title='수금조건 개선 전·후 누적 현금흐름'),use_container_width=True)
-    st.markdown('''**자금관리 직무에서 활용할 관점**
-    - **수납관리:** 거래처별 회수 예정일과 실제 입금일의 차이를 점검해 수금 예측 정확도 개선
-    - **자금관리·출납:** 매입대금 지급일과 수금일을 대조하여 자금 부족이 집중되는 시점 사전 확인
-    - **차입금 현황 관리:** 예상 자금 부족 기간과 차입금 만기 일정을 함께 검토해 자금 운용 계획 지원
-    - **유관부서 협업:** 영업·구매부서와 결제조건 및 회수 지연 사유 확인''')
-    st.warning('회수기간 단축에 따른 **최대 부족액 감소**는 가정에 따른 시뮬레이션 결과입니다. 실제 수금 실적, 순이익 증가 또는 회사의 실제 자금 확보액을 의미하지 않습니다.')
-    st.subheader('자기소개서에 연결할 핵심 메시지')
-    st.write('“삼진제약의 코프로모션 확대 과정에서 매출 증가와 자금 유입 시점이 달라질 수 있다는 점에 주목했습니다. 생성형 AI를 활용해 매입대금 지급조건과 판매대금 회수조건에 따른 월별 자금수지를 분석하는 프로그램을 구현했습니다. 입사 후에도 수금일정과 일별 자금현황을 면밀히 점검하여 사업 확대를 안정적인 자금 운영으로 뒷받침하겠습니다.”')
+with summary:
+    st.header("④ 분석 결과, 자금관리 직무에서 무엇이 중요할까?")
+    st.markdown("""
+**확인된 사실**
+- 삼진제약은 2023~2025년 연간 약 350억 원 수준의 연구개발비를 공시했습니다.
+- 2026년 상반기 영업활동현금흐름은 전년 동기 대비 개선됐습니다.
+- 2026년 6월 말 총차입금은 1,290억 원이고, 그중 1,010억 원이 단기차입금·유동성장기부채입니다.
 
-with st.expander('공시 출처·산식·한계'):
-    st.markdown('''- **공시 데이터:** 삼진제약 2025 사업보고서(2026.03.16), II. 사업의 내용, 4. 매출 및 수주상황. 2023~2025 매출구조. 원자료 백만원을 억원으로 환산.
-- **사업 방향:** 삼진제약 코프로모션 확대 관련 사업 설명. 코프로모션 개별 계약금액·매입원가율·지급/회수일은 본 공시의 매출구조 표에서 직접 확인할 수 없으므로 모두 사용자 가정.
-- **산식:** 연간 매출액을 12개월에 균등 배분; 각 월 매출을 달력상 날짜에 균등 배분; 수금일 = 발생일 + 회수일; 매입대금 지급일 = 발생일 + 지급일; 매입액 = 매출액 × 원가율.
-- **필요 운전자금:** 시뮬레이션 기간 중 누적 순현금흐름의 최저값이 음수일 때 그 절댓값. 사업 초기 현금잔액 0을 가정.
-- **주의:** 공시의 상품 매출은 코프로모션 매출과 일치하지 않음. 판촉·운영비·부가세·재고매입 선행·반품·수수료·세금·기존 사업현금흐름·차입금 상환·계약상 실제 결제조건 등은 제외. 실제 자금일보나 회사의 공식 예측치가 아님.''')
+**자금관리 관점의 해석**
+- 연구개발이 지속되는 동안에는 영업현금 유입을 안정적으로 관리하는 일이 중요합니다.
+- 차입금은 총액뿐 아니라 만기, 이자율, 상환·차환 계획을 함께 점검해야 합니다.
+- 공시만으로는 일별 자금수지나 실제 신약개발 예산을 알 수 없으므로, 실무에서는 내부 자료를 확인해야 합니다.
+
+**입사 후 기여 방향**
+- 일별 자금현황과 입출금 내역을 정확히 관리하고, 매출채권 수금 현황을 점검하겠습니다.
+- 차입금 잔액·만기와 금융자산 현황을 체계적으로 관리해 장기 연구개발을 뒷받침하는 자금 운영에 기여하겠습니다.
+""")
+    st.markdown("#### 면접에서 한 문장으로 설명하기")
+    st.info("“삼진제약이 신약개발을 지속하는 데 필요한 자금관리 관점을 이해하기 위해, 연구개발비·영업활동현금흐름·차입금 추이를 공시자료로 비교하는 프로그램을 생성형 AI를 활용해 구현했습니다.”")
+
+st.divider()
+st.caption("자료: 삼진제약 2024·2025년 사업보고서(2025.03.13, 2026.03.16 제출), 2025·2026년 반기보고서(2025.08.14, 2026.08.14 제출). 각 공시의 '연구개발 비용', '재무상태표', '현금흐름표'. 모든 금액은 표시 편의를 위해 반올림했습니다.")
