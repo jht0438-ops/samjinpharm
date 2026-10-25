@@ -52,26 +52,22 @@ with t1:
 with t2:
     st.header('② 코프로모션 사업 확대 시나리오')
     st.markdown('**왜 분석하나요?** 매출 확대의 효과를 이익뿐 아니라 현금 유입·유출 시점으로 확인하기 위해서입니다.')
-    st.markdown('**어떻게 분석하나요?** 월별 매출을 가정하고, 매입원가와 현금 회수·지급 시점을 일 단위로 계산합니다.')
+    st.markdown('**어떻게 분석하나요?** 연간 매출액을 월별로 균등 배분하고, 매입원가와 현금 회수·지급 시점을 일 단위로 계산합니다.')
     st.markdown('**얻을 수 있는 결론은?** 사업 규모가 같더라도 거래조건에 따라 현금 부족 구간과 운전자금 부담이 달라집니다.')
     st.caption('아래 값은 **전부 가상 시나리오 입력값**입니다. 실제 삼진제약의 코프로모션 계약조건이 아닙니다.')
-    c1,c2,c3=st.columns(3)
+    c1,c2=st.columns(2)
     with c1:
         annual_sales=st.number_input('신규/확대 사업 연간 매출 가정 (억 원)',min_value=0.0,max_value=3000.0,value=120.0,step=10.0)
-        growth=st.slider('월별 매출 성장률 가정 (%)',-5.0,10.0,1.0,0.5)
+        cost_ratio=st.slider('매입원가율 가정 (%)',30.0,95.0,87.0,1.0)
     with c2:
-        cost_ratio=st.slider('매입원가율 가정 (%)',30.0,95.0,75.0,1.0)
-        collection_days=st.slider('판매대금 회수까지 소요일 (일)',0,120,60,5)
-    with c3:
-        payment_days=st.slider('매입대금 지급까지 소요일 (일)',0,120,30,5)
-        expense_ratio=st.slider('현금성 판촉·운영비율 가정 (%)',0.0,25.0,5.0,1.0)
-    st.caption('가정: 매출과 매입은 각 월에 일별 균등 발생, 매출원가는 매출에 비례, 판촉·운영비는 발생 월 말 지급. 부가가치세·법인세·재고 선매입·반품·수수료·기존 잔액은 제외.')
+        payment_days=st.slider('매입대금 지급까지 소요일 (일)',0,150,80,5)
+        collection_days=st.slider('판매대금 회수까지 소요일 (일)',0,180,105,5)
+    st.caption('가정: 매출과 매입은 매월 동일한 금액으로 발생하고, 월중 매일 균등하게 배분됩니다. 매입대금은 매출에 비례하여 지급합니다. 판촉·운영비, 부가가치세·법인세·재고 선매입·반품·수수료·기존 잔액은 제외합니다.')
 
 # 달력상 실제 월 일수로 2027년 1~12월 영업을 가정, 2028년까지 후속 수금/지급 추적
 # 코프로모션 신규 사업의 증분 흐름만 계산. 2027은 가상의 시뮬레이션 연도이며 사업 계획 연도가 아님.
 months=pd.period_range('2027-01',periods=12,freq='M')
-weights=[(1+growth/100)**i for i in range(12)]
-monthly_sales=[annual_sales*w/sum(weights) for w in weights]
+monthly_sales=[annual_sales/12]*12
 records=[]
 for period,amt in zip(months,monthly_sales):
     dates=pd.date_range(period.start_time,period.end_time,freq='D')
@@ -79,17 +75,16 @@ for period,amt in zip(months,monthly_sales):
         portion=amt/len(dates)
         records.append({'date':d+pd.Timedelta(days=collection_days),'type':'판매대금 수금','amount':portion})
         records.append({'date':d+pd.Timedelta(days=payment_days),'type':'매입대금 지급','amount':-portion*cost_ratio/100})
-    records.append({'date':period.end_time.normalize(),'type':'판촉·운영비 지급','amount':-amt*expense_ratio/100})
 
 def summarize(records):
     frame=pd.DataFrame(records)
     frame['월']=frame['date'].dt.to_period('M').astype(str)
     pivot=frame.pivot_table(index='월',columns='type',values='amount',aggfunc='sum',fill_value=0)
-    for name in ['판매대금 수금','매입대금 지급','판촉·운영비 지급']:
+    for name in ['판매대금 수금','매입대금 지급']:
         if name not in pivot:pivot[name]=0.0
     pivot=pivot.reindex(pd.period_range('2027-01','2028-04',freq='M').astype(str),fill_value=0.0)
     pivot['현금 유입']=pivot['판매대금 수금']
-    pivot['현금 유출']=-pivot['매입대금 지급']-pivot['판촉·운영비 지급']
+    pivot['현금 유출']=-pivot['매입대금 지급']
     pivot['월별 순현금흐름']=pivot['현금 유입']-pivot['현금 유출']
     pivot['누적 순현금흐름']=pivot['월별 순현금흐름'].cumsum()
     return pivot
@@ -135,7 +130,7 @@ with t4:
     - **수납관리:** 거래처별 회수 예정일과 실제 입금일의 차이를 점검해 수금 예측 정확도 개선
     - **자금관리·출납:** 매입대금 지급일과 수금일을 대조하여 자금 부족이 집중되는 시점 사전 확인
     - **차입금 현황 관리:** 예상 자금 부족 기간과 차입금 만기 일정을 함께 검토해 자금 운용 계획 지원
-    - **유관부서 협업:** 영업·구매부서와 결제조건, 판촉비 집행시기, 회수 지연 사유 확인''')
+    - **유관부서 협업:** 영업·구매부서와 결제조건 및 회수 지연 사유 확인''')
     st.warning('회수기간 단축에 따른 **최대 부족액 감소**는 가정에 따른 시뮬레이션 결과입니다. 실제 수금 실적, 순이익 증가 또는 회사의 실제 자금 확보액을 의미하지 않습니다.')
     st.subheader('자기소개서에 연결할 핵심 메시지')
     st.write('“삼진제약의 코프로모션 확대 과정에서 매출 증가와 자금 유입 시점이 달라질 수 있다는 점에 주목했습니다. 생성형 AI를 활용해 매입대금 지급조건과 판매대금 회수조건에 따른 월별 자금수지를 분석하는 프로그램을 구현했습니다. 입사 후에도 수금일정과 일별 자금현황을 면밀히 점검하여 사업 확대를 안정적인 자금 운영으로 뒷받침하겠습니다.”')
@@ -143,6 +138,6 @@ with t4:
 with st.expander('공시 출처·산식·한계'):
     st.markdown('''- **공시 데이터:** 삼진제약 2025 사업보고서(2026.03.16), II. 사업의 내용, 4. 매출 및 수주상황. 2023~2025 매출구조. 원자료 백만원을 억원으로 환산.
 - **사업 방향:** 삼진제약 코프로모션 확대 관련 사업 설명. 코프로모션 개별 계약금액·매입원가율·지급/회수일은 본 공시의 매출구조 표에서 직접 확인할 수 없으므로 모두 사용자 가정.
-- **산식:** 매출액은 12개월에 성장률 가중 배분; 각 월 매출을 달력상 날짜에 균등 배분; 수금일 = 발생일 + 회수일; 매입대금 지급일 = 발생일 + 지급일; 매입액 = 매출액 × 원가율; 판촉·운영비는 발생 월말 지급.
+- **산식:** 연간 매출액을 12개월에 균등 배분; 각 월 매출을 달력상 날짜에 균등 배분; 수금일 = 발생일 + 회수일; 매입대금 지급일 = 발생일 + 지급일; 매입액 = 매출액 × 원가율.
 - **필요 운전자금:** 시뮬레이션 기간 중 누적 순현금흐름의 최저값이 음수일 때 그 절댓값. 사업 초기 현금잔액 0을 가정.
-- **주의:** 공시의 상품 매출은 코프로모션 매출과 일치하지 않음. 부가세·재고매입 선행·반품·수수료·세금·기존 사업현금흐름·차입금 상환·계약상 실제 결제조건 등은 제외. 실제 자금일보나 회사의 공식 예측치가 아님.''')
+- **주의:** 공시의 상품 매출은 코프로모션 매출과 일치하지 않음. 판촉·운영비·부가세·재고매입 선행·반품·수수료·세금·기존 사업현금흐름·차입금 상환·계약상 실제 결제조건 등은 제외. 실제 자금일보나 회사의 공식 예측치가 아님.''')
